@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Chantia</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Schibsted+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap');
+  html,body{margin:0;background:#0a0b0d}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+  @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+  @keyframes typing{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-4px)}}
+  .rise{animation:rise .45s ease both}
+  input[type=range]{-webkit-appearance:none;height:5px;border-radius:99px;background:#26282d;outline:none}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:99px;background:#ff8a3d;cursor:pointer;border:3px solid #0a0b0d}
+  ::-webkit-scrollbar{width:0;height:0}
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo, useRef } = React;
+
+// ════════ CONFIG ════════
+// Pour activer la démo en IA RÉELLE sur le site hébergé, colle ici l'URL de ta fonction proxy
+// (voir chantia-demo-proxy.js). Laisse vide => la démo tourne en mode "exemple" scripté.
+const PROXY_URL = "/.netlify/functions/chantia-demo-proxy";
+
+const ACCENT = "#ff8a3d", BG = "#0a0b0d";
+const CLIENT = new URLSearchParams(location.search).has("client") || location.hash === "#client";
+
+// icônes (emoji) — zéro dépendance
+const mk = (e) => (p = {}) => <span style={{ fontSize: (p.size || 16) + "px", lineHeight: 1, display: "inline-block", filter: "grayscale(0)", color: p.color }}>{e}</span>;
+const HardHat = mk("👷"), Store = mk("🏠"), MessageSquare = mk("💬"), LayoutGrid = mk("📊"), BookOpen = mk("📖"),
+  Check = mk("✓"), Send = mk("➤"), X = mk("✕"), Clock = mk("⏱"), PhoneMissed = mk("📵"), CalendarCheck = mk("📅"),
+  TrendingUp = mk("📈"), Phone = mk("📞"), ArrowRight = mk("→"), Sparkles = mk("✨"), ShieldCheck = mk("🛡"),
+  Plus = mk("＋"), Trash2 = mk("🗑"), Activity = mk("📊"), Users = mk("👥"), Inbox = mk("📥"), Crosshair = mk("🎯"),
+  Calculator = mk("🧮"), Copy = mk("⧉"), Search = mk("🔍"), FileText = mk("📄");
+
+// stockage local (avec repli mémoire pour la prévisualisation)
+const mem = {};
+const store = {
+  async get(k) { try { const v = localStorage.getItem(k); return v ? { value: v } : null; } catch { return mem[k] ? { value: mem[k] } : null; } },
+  async set(k, v) { try { localStorage.setItem(k, v); } catch { mem[k] = v; } },
+};
+
+const KEY = "chantia-data-v1";
+const seed = {
+  clients: [
+    { id: "c1", name: "Plomberie Martin", city: "Toulouse", mrr: 190, since: "Mai" },
+    { id: "c2", name: "Élec Pro 31", city: "Toulouse", mrr: 190, since: "Mai" },
+    { id: "c3", name: "Toiture Sud", city: "Montpellier", mrr: 290, since: "Juin" },
+  ],
+  leads: [
+    { id: "l1", name: "Mme Durand", source: "Appel manqué", stage: "Devis", value: "Fuite salle de bain", client: "Plomberie Martin", at: "12:40" },
+    { id: "l2", name: "M. Lopez", source: "Appel manqué", stage: "Devis", value: "Rénovation cuisine", client: "Toiture Sud", at: "18:22" },
+    { id: "l3", name: "M. Bernard", source: "Site web", stage: "Qualifié", value: "Tableau électrique", client: "Élec Pro 31", at: "07:55" },
+    { id: "l4", name: "Mme Petit", source: "Appel manqué", stage: "Nouveau", value: "Volet roulant", client: "Toiture Sud", at: "08:10" },
+  ],
+  prospects: [
+    { id: "p1", name: "SARL Plomberie Vidal", city: "Bordeaux", channel: "Plombier", stage: "Démo" },
+    { id: "p2", name: "Élec Concept", city: "Nantes", channel: "Électricien", stage: "Contacté" },
+    { id: "p3", name: "Maçonnerie Sud", city: "Lille", channel: "Maçon", stage: "À contacter" },
+  ],
+  revenue: [540, 820, 1100, 1480, 1770, 2150],
+};
+const stageColor = { Nouveau: "#7c9cff", Qualifié: "#fbbf24", Devis: "#ff8a3d", Perdu: "#6b7280", "À contacter": "#6b7280", Contacté: "#7c9cff", Démo: "#fbbf24", Signé: "#4ade80" };
+const msgTemplate = (p) => `Bonjour ${p.name}, je vois que vous intervenez sur le secteur de ${p.city}. Quand un client appelle pendant que vous êtes sur un chantier, il se passe quoi ? La plupart des artisans que j'aide rataient ces appels — et le devis avec. Je mets en place un système qui répond à chaque appel manqué en 30 sec, qualifie les travaux et vous renvoie le devis prêt à chiffrer. Je peux vous montrer en 2 min ?`;
+
+function Sparkline({ data }) {
+  const w = 300, h = 80, max = Math.max(...data), min = Math.min(...data);
+  const pts = data.map((v, i) => [(i / (data.length - 1)) * w, h - ((v - min) / (max - min || 1)) * (h - 10) - 5]);
+  const line = pts.map(p => p.join(",")).join(" ");
+  const area = `0,${h} ` + line + ` ${w},${h}`;
+  return <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{ width: "100%", height: 80 }}>
+    <defs><linearGradient id="sg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={ACCENT} stopOpacity="0.4" /><stop offset="100%" stopColor={ACCENT} stopOpacity="0" /></linearGradient></defs>
+    <polygon points={area} fill="url(#sg)" /><polyline points={line} fill="none" stroke={ACCENT} strokeWidth="2.5" />
+  </svg>;
+}
+
+function App() {
+  const [mode, setMode] = useState("produit");
+  const [pView, setPView] = useState("home");
+  const [aView, setAView] = useState("dash");
+  const [data, setData] = useState(null);
+  const [modal, setModal] = useState(null);
+  const [msgFor, setMsgFor] = useState(null);
+
+  useEffect(() => { (async () => { try { const r = await store.get(KEY); setData(r && r.value ? JSON.parse(r.value) : seed); } catch { setData(seed); } })(); }, []);
+  const save = async (n) => { setData(n); try { await store.set(KEY, JSON.stringify(n)); } catch {} };
+  const addItem = (type, item) => { const id = Math.random().toString(36).slice(2, 8); save({ ...data, [type]: [{ id, ...item }, ...data[type]] }); setModal(null); };
+  const del = (type, id) => save({ ...data, [type]: data[type].filter(x => x.id !== id) });
+  const setStage = (id, stage) => save({ ...data, prospects: data.prospects.map(p => p.id === id ? { ...p, stage } : p) });
+
+  if (!data) return <div style={{ background: BG, minHeight: "100vh", display: "grid", placeItems: "center", color: ACCENT, fontFamily: "monospace" }}>chargement…</div>;
+
+  const produitNav = [{ k: "home", i: Store, l: "Accueil" }, { k: "demo", i: MessageSquare, l: "Démo" }, { k: "client", i: LayoutGrid, l: "Client" }, { k: "guide", i: BookOpen, l: "Guide" }];
+  const pilotNav = [{ k: "dash", i: Activity, l: "Tableau" }, { k: "clients", i: Users, l: "Clients" }, { k: "leads", i: Inbox, l: "Devis" }, { k: "prospects", i: Crosshair, l: "Prospects" }, { k: "roi", i: Calculator, l: "ROI" }];
+  const nav = mode === "produit" ? produitNav : pilotNav;
+  const cur = mode === "produit" ? pView : aView;
+  const setCur = mode === "produit" ? setPView : setAView;
+
+  return (
+    <div style={{ fontFamily: "'Schibsted Grotesk',sans-serif", background: BG, color: "#e8eaed", minHeight: "100vh", maxWidth: 480, margin: "0 auto", paddingBottom: 84, position: "relative", backgroundImage: "radial-gradient(130% 60% at 85% -8%, rgba(255,138,61,0.12), transparent 55%)" }}>
+      <div style={{ padding: "16px 18px 10px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: CLIENT ? 0 : 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+            <div style={{ width: 30, height: 30, borderRadius: 9, background: ACCENT, display: "grid", placeItems: "center" }}><HardHat size={17} /></div>
+            <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 21, letterSpacing: -0.6 }}>Chantia</div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, background: "rgba(74,222,128,0.12)", padding: "5px 9px", borderRadius: 20 }}>
+            <span style={{ width: 7, height: 7, borderRadius: 99, background: "#4ade80", animation: "pulse 1.6s infinite" }} /><span style={{ fontSize: 11, color: "#4ade80", fontWeight: 600 }}>🇫🇷 LIVE</span>
+          </div>
+        </div>
+        {!CLIENT && <div style={{ display: "flex", background: "#15171a", border: "1px solid #1d1f23", borderRadius: 12, padding: 4 }}>
+          {[["produit", "Produit"], ["pilotage", "Pilotage"]].map(([k, l]) => <button key={k} onClick={() => setMode(k)} style={{ flex: 1, border: "none", borderRadius: 9, padding: "9px 0", fontSize: 13, fontWeight: 700, cursor: "pointer", background: mode === k ? ACCENT : "transparent", color: mode === k ? BG : "#8b8f96" }}>{l}</button>)}
+        </div>}
+      </div>
+
+      <div key={mode + cur} className="rise">
+        {mode === "produit" && pView === "home" && <Home go={setPView} />}
+        {mode === "produit" && pView === "demo" && <Demo />}
+        {mode === "produit" && pView === "client" && <ClientPortal />}
+        {mode === "produit" && pView === "guide" && <Guide />}
+        {mode === "pilotage" && aView === "dash" && <Dash data={data} />}
+        {mode === "pilotage" && aView === "clients" && <Clients data={data} onAdd={() => setModal("clients")} onDel={del} />}
+        {mode === "pilotage" && aView === "leads" && <Leads data={data} />}
+        {mode === "pilotage" && aView === "prospects" && <Prospects data={data} onAdd={() => setModal("prospects")} onAddDirect={(it) => addItem("prospects", it)} onDel={del} onMsg={setMsgFor} />}
+        {mode === "pilotage" && aView === "roi" && <ROI />}
+      </div>
+
+      <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, maxWidth: 480, margin: "0 auto", background: "rgba(14,15,18,0.93)", backdropFilter: "blur(14px)", borderTop: "1px solid #1c1e22", display: "flex", justifyContent: "space-around", padding: "10px 0 14px", zIndex: 30 }}>
+        {nav.map(({ k, i: Ic, l }) => <button key={k} onClick={() => setCur(k)} style={{ background: "none", border: "none", display: "flex", flexDirection: "column", alignItems: "center", gap: 4, cursor: "pointer", color: cur === k ? ACCENT : "#6b7078" }}><Ic size={19} /><span style={{ fontSize: 9.5, fontWeight: cur === k ? 700 : 500 }}>{l}</span></button>)}
+      </div>
+
+      {modal && <AddModal type={modal} onClose={() => setModal(null)} onAdd={addItem} />}
+      {msgFor && <MsgModal p={msgFor} onClose={() => setMsgFor(null)} onSent={(id) => { setStage(id, "Contacté"); setMsgFor(null); }} />}
+    </div>
+  );
+}
+
+function Sec({ t }) { return <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 20, margin: "26px 2px 14px" }}>{t}</div>; }
+function Badge({ stage }) { const c = stageColor[stage] || "#6b7280"; return <span style={{ fontSize: 10, fontWeight: 700, color: c, background: c + "1f", padding: "3px 8px", borderRadius: 20 }}>{stage}</span>; }
+
+function Home({ go }) {
+  const steps = [["📵", "Un client appelle, vous bossez", "Sur un toit, dans un mur, au volant. Impossible de décrocher."], ["💬", "Chantia répond en 30s", "SMS/WhatsApp auto : il rassure et qualifie les travaux."], ["📄", "Vous recevez le devis à faire", "Type de travaux, urgence, contact. Vous n'avez plus qu'à chiffrer."]];
+  const plans = [["Installation", "490€", "une fois", ["Mise en place complète", "Branchement de votre ligne", "Messages sur-mesure"], false], ["Essentiel", "190€", "/mois", ["Réponse 24/7 aux appels manqués", "Qualification des travaux", "Devis capté", "Récap chaque matin"], true], ["Pro", "290€", "/mois", ["Tout Essentiel", "Relances automatiques", "Prise de RDV", "Support prioritaire"], false]];
+  const comp = [["Appel pendant un chantier", "Sonne dans le vide → concurrent", "Réponse auto en 30s"], ["Devis demandé le soir", "Oublié", "Capté et qualifié"], ["Week-end", "Messagerie pleine", "Demandes triées"], ["Relance client", "Jamais faite", "Automatique"]];
+  return (
+    <div style={{ padding: "4px 16px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 7, background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.25)", borderRadius: 12, padding: "9px 12px", margin: "6px 0 16px" }}><Sparkles size={14} /><span style={{ fontSize: 12, color: "#f5d98a" }}><b>Lancement :</b> 5 premiers artisans à <b style={{ color: "#fff" }}>-50% sur l'installation</b>.</span></div>
+      <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 34, lineHeight: 1.05, letterSpacing: -1.2 }}>Ne ratez plus un<br />chantier. <span style={{ color: ACCENT }}>Jamais.</span></div>
+      <div style={{ color: "#9aa0a6", fontSize: 15, marginTop: 12, lineHeight: 1.5 }}>Vous êtes sur le chantier, les mains prises. Chantia répond à chaque appel manqué en 30 secondes, qualifie le besoin et vous renvoie un devis prêt à chiffrer.</div>
+      <button onClick={() => go("demo")} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", background: ACCENT, color: BG, border: "none", padding: 15, borderRadius: 13, fontWeight: 800, fontSize: 15, marginTop: 18, cursor: "pointer" }}>Tester la démo <ArrowRight size={16} /></button>
+
+      <div style={{ display: "flex", gap: 8, margin: "22px 0" }}>{[["30s", "réponse"], ["24/7", "même au chantier"], ["+35%", "de devis"]].map(([n, l], i) => <div key={i} style={{ flex: 1, background: "#121316", border: "1px solid #1d1f23", borderRadius: 14, padding: "13px 8px", textAlign: "center" }}><div style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700, fontSize: 20, color: ACCENT }}>{n}</div><div style={{ fontSize: 10, color: "#7c8088", marginTop: 3 }}>{l}</div></div>)}</div>
+
+      <Sec t="Avant / Après" />
+      <div style={{ background: "#121316", border: "1px solid #1d1f23", borderRadius: 16, overflow: "hidden" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", background: "#16181c" }}><div style={{ padding: "10px 12px", fontSize: 11, fontWeight: 700, color: "#9aa0a6" }}>Sans Chantia</div><div style={{ padding: "10px 12px", fontSize: 11, fontWeight: 700, color: ACCENT, borderLeft: "1px solid #1d1f23" }}>Avec Chantia</div></div>
+        {comp.map(([, b, a], i) => <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", borderTop: "1px solid #1d1f23" }}><div style={{ padding: "11px 12px", fontSize: 12.5, color: "#8b8f96" }}>✕ {b}</div><div style={{ padding: "11px 12px", fontSize: 12.5, color: "#f0d3b0", borderLeft: "1px solid #1d1f23" }}>✓ {a}</div></div>)}
+      </div>
+
+      <Sec t="Comment ça marche" />
+      {steps.map(([e, t, d], i) => <div key={i} style={{ display: "flex", gap: 13, alignItems: "center", marginBottom: 11 }}><div style={{ width: 44, height: 44, borderRadius: 12, background: "rgba(255,138,61,0.12)", display: "grid", placeItems: "center", flexShrink: 0, fontSize: 20 }}>{e}</div><div><div style={{ fontSize: 15, fontWeight: 700 }}>{t}</div><div style={{ fontSize: 12.5, color: "#8b8f96" }}>{d}</div></div></div>)}
+
+      <div style={{ background: "linear-gradient(135deg,rgba(255,138,61,0.14),rgba(255,138,61,0.03))", border: "1.5px solid " + ACCENT, borderRadius: 16, padding: 18, margin: "24px 0 4px" }}><div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 19, lineHeight: 1.2 }}>190€/mois. Un seul chantier récupéré le rembourse 5 fois.</div><div style={{ fontSize: 13, color: "#9aa0a6", marginTop: 7, lineHeight: 1.5 }}>Vous n'achetez pas un logiciel. Vous achetez les devis que vous ratiez quand le téléphone sonnait dans le vide.</div></div>
+
+      <Sec t="Tarifs" />
+      {plans.map(([name, price, per, feats, hot], i) => <div key={i} style={{ background: hot ? "rgba(255,138,61,0.06)" : "#121316", border: hot ? "1.5px solid " + ACCENT : "1px solid #1d1f23", borderRadius: 16, padding: 16, marginBottom: 11, position: "relative" }}>{hot && <div style={{ position: "absolute", top: -10, right: 14, background: ACCENT, color: BG, fontSize: 10, fontWeight: 800, padding: "3px 9px", borderRadius: 20 }}>POPULAIRE</div>}<div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}><div style={{ fontSize: 15, fontWeight: 700 }}>{name}</div><div><span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700, fontSize: 22 }}>{price}</span><span style={{ color: "#7c8088", fontSize: 12 }}> {per}</span></div></div><div style={{ marginTop: 11 }}>{feats.map((f, j) => <div key={j} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, fontSize: 13, color: "#c5c8cc" }}><span style={{ color: ACCENT }}>✓</span> {f}</div>)}</div></div>)}
+
+      <div style={{ background: "#121316", border: "1px solid #1d1f23", borderRadius: 18, padding: 20, margin: "16px 0 4px", textAlign: "center" }}><div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 21 }}>Prêt à ne plus rater un devis ?</div><div style={{ fontSize: 13, color: "#9aa0a6", margin: "8px 0 14px" }}>Démo de 2 minutes. Installé en 48h. Sans engagement.</div><button onClick={() => go("demo")} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", background: ACCENT, color: BG, border: "none", padding: 15, borderRadius: 13, fontWeight: 800, fontSize: 15, cursor: "pointer" }}>📞 Réserver ma démo</button><div style={{ marginTop: 14, fontSize: 11, color: "#5c6068" }}>🛡 Conforme RGPD · Marque blanche · Installé en 48h</div></div>
+    </div>
+  );
+}
+
+function Demo() {
+  const greet = "Bonjour 👋 L'artisan est sur un chantier, je prends votre demande pour qu'il vous rappelle vite. C'est pour quel type de travaux ?";
+  const [msgs, setMsgs] = useState([{ role: "assistant", content: greet }]);
+  const [input, setInput] = useState(""); const [loading, setLoading] = useState(false);
+  const endRef = useRef(null);
+  useEffect(() => { if (endRef.current) endRef.current.scrollIntoView({ behavior: "smooth" }); }, [msgs, loading]);
+  const sys = "Tu es l'assistant téléphonique d'un artisan du bâtiment (marque blanche). Le client vient d'appeler mais l'artisan est sur un chantier. Réponds par message, en français, ton sympathique et CONCIS (2-3 phrases). Pose UNE question à la fois (type de travaux, urgence, ville, délai), puis propose un rappel ou une visite pour le devis. Ne sors jamais du rôle.";
+  const scripted = ["C'est noté. Est-ce une urgence (fuite, panne) ou des travaux à planifier ?", "Très bien. Vous êtes dans quel secteur ou quelle ville ?", "Parfait. Vous souhaitez une intervention sous quel délai ?", "Merci ! Je transmets tout à l'artisan, il vous rappelle très vite. Préférez-vous être rappelé aujourd'hui ou demain ?", "C'est enregistré, vous serez recontacté rapidement 🙏"];
+  const fallback = (next) => { const idx = next.filter(m => m.role === "user").length - 1; return scripted[Math.min(idx, scripted.length - 1)]; };
+  const send = async (text) => {
+    const t = (text != null ? text : input).trim(); if (!t || loading) return;
+    const next = [...msgs, { role: "user", content: t }]; setMsgs(next); setInput(""); setLoading(true);
+    let reply = "";
+    if (PROXY_URL) {
+      try { const res = await fetch(PROXY_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ system: sys, messages: next.map(m => ({ role: m.role, content: m.content })) }) }); const d = await res.json(); reply = (d && d.text) ? d.text : ""; } catch { reply = ""; }
+    }
+    if (!reply) { await new Promise(r => setTimeout(r, 500)); reply = fallback(next); }
+    setMsgs([...next, { role: "assistant", content: reply }]);
+    setLoading(false);
+  };
+  const chips = ["J'ai une fuite d'eau urgente", "Devis rénovation salle de bain", "Refaire mon tableau électrique"];
+  return (
+    <div style={{ height: "calc(100vh - 200px)", display: "flex", flexDirection: "column" }}>
+      <div style={{ padding: "0 16px 10px" }}><div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 19 }}>Démo en direct</div><div style={{ fontSize: 11.5, color: "#8b8f96" }}>Écrivez comme un client qui vient d'appeler 👇{PROXY_URL ? "" : " (exemple)"}</div></div>
+      <div style={{ flex: 1, overflowY: "auto", padding: "8px 16px" }}>
+        {msgs.map((m, i) => <div key={i} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start", marginBottom: 9 }}><div style={{ maxWidth: "80%", padding: "10px 13px", borderRadius: 15, fontSize: 14, lineHeight: 1.45, background: m.role === "user" ? ACCENT : "#1a1c20", color: m.role === "user" ? BG : "#e8eaed", borderBottomRightRadius: m.role === "user" ? 4 : 15, borderBottomLeftRadius: m.role === "user" ? 15 : 4, fontWeight: m.role === "user" ? 600 : 400 }}>{m.content}</div></div>)}
+        {loading && <div style={{ display: "flex", gap: 4, padding: "12px 14px", background: "#1a1c20", borderRadius: 15, width: "fit-content" }}>{[0, 1, 2].map(d => <span key={d} style={{ width: 7, height: 7, borderRadius: 99, background: "#6b7078", animation: "typing 1s infinite " + (d * 0.15) + "s" }} />)}</div>}
+        <div ref={endRef} />
+      </div>
+      <div style={{ padding: "6px 12px 8px", display: "flex", gap: 7, overflowX: "auto" }}>{chips.map((c, i) => <button key={i} onClick={() => send(c)} style={{ flexShrink: 0, background: "#15171a", border: "1px solid #26282d", color: "#b5b9bf", padding: "7px 12px", borderRadius: 20, fontSize: 12, cursor: "pointer", whiteSpace: "nowrap" }}>{c}</button>)}</div>
+      <div style={{ display: "flex", gap: 8, padding: "4px 12px 8px" }}><input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === "Enter" && send()} placeholder="Votre message…" style={{ flex: 1, background: "#15171a", border: "1px solid #26282d", borderRadius: 12, padding: "13px 14px", color: "#e8eaed", fontSize: 14, fontFamily: "inherit" }} /><button onClick={() => send()} disabled={loading} style={{ background: ACCENT, border: "none", borderRadius: 12, width: 48, fontSize: 18, cursor: "pointer", opacity: loading ? 0.5 : 1, color: BG }}>➤</button></div>
+    </div>
+  );
+}
+
+function ClientPortal() {
+  const stats = [["📵", "38", "Appels captés", ACCENT], ["📄", "21", "Devis générés", "#4ade80"], ["⏱", "26s", "Réponse moyenne", "#7c9cff"], ["📅", "9", "Demandes week-end", "#fbbf24"]];
+  const leads = [["Mme Durand", "Fuite salle de bain · Urgent", "Devis", "12:40", 1], ["M. Lopez", "Rénovation cuisine", "Devis", "18:22", 1], ["M. Bernard", "Tableau électrique", "Qualifié", "07:55", 0], ["Mme Petit", "Volet roulant", "Nouveau", "08:10", 0]];
+  return (
+    <div style={{ padding: "4px 16px" }}>
+      <div style={{ margin: "6px 2px 4px" }}><div style={{ fontSize: 12, color: "#8b8f96" }}>Espace client · marque blanche</div><div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 22 }}>Plomberie Martin · Toulouse</div></div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, margin: "14px 0" }}>{stats.map(([e, n, l, c], i) => <div key={i} style={{ background: "#121316", border: "1px solid #1d1f23", borderRadius: 15, padding: 14 }}><div style={{ fontSize: 16 }}>{e}</div><div style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700, fontSize: 24, marginTop: 5 }}>{n}</div><div style={{ fontSize: 11, color: "#8b8f96" }}>{l}</div></div>)}</div>
+      <div style={{ background: "rgba(255,138,61,0.07)", border: "1px solid rgba(255,138,61,0.25)", borderRadius: 14, padding: 14, marginBottom: 16, fontSize: 13, color: "#f0d3b0" }}>📈 Ce mois : <b style={{ color: "#fff" }}>9 demandes</b> captées le week-end. Sans Chantia, ces devis partaient ailleurs.</div>
+      <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 18, margin: "4px 2px 11px" }}>Vos demandes de devis</div>
+      {leads.map(([n, v, s, t, g], i) => <div key={i} style={{ display: "flex", alignItems: "center", gap: 11, padding: 13, background: "#121316", border: "1px solid #1d1f23", borderRadius: 13, marginBottom: 8 }}><div style={{ flex: 1 }}><div style={{ fontSize: 14, fontWeight: 600 }}>{n}</div><div style={{ fontSize: 11.5, color: "#7c8088" }}>{v} · {t}</div></div>{g ? <span style={{ background: "rgba(74,222,128,0.13)", color: "#4ade80", padding: "7px 11px", borderRadius: 9, fontSize: 12, fontWeight: 700 }}>📞 Rappeler</span> : <Badge stage={s} />}</div>)}
+    </div>
+  );
+}
+
+function Guide() {
+  const steps = [["1", "Branchement 10 min", "On relie votre numéro : tout appel manqué déclenche une réponse auto."], ["2", "Messages sur-mesure", "On calibre le ton et les questions à votre image."], ["3", "Mise en ligne (48h)", "Dès qu'un appel sonne dans le vide, le client a une réponse en 30s."], ["4", "Vous recevez les devis", "Demandes qualifiées sur votre téléphone. Vous chiffrez, vous signez."]];
+  const faqs = [["Je change de numéro ?", "Non, on se branche sur votre ligne. Le client appelle comme avant."], ["C'est une IA ?", "En marque blanche, au nom de votre entreprise. Naturel et rassurant."], ["Une urgence type fuite ?", "Détectée, marquée urgente, vous êtes alerté pour rappeler en priorité."], ["Mes données ?", "Consentement clair et conformité RGPD dès le 1er message."]];
+  return (
+    <div style={{ padding: "4px 16px" }}>
+      <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 24, margin: "8px 2px 4px" }}>Mode d'emploi</div>
+      <div style={{ color: "#8b8f96", fontSize: 14, margin: "0 2px 18px" }}>Du branchement à vos premiers devis captés, en 4 étapes.</div>
+      {steps.map(([n, t, d], i) => <div key={i} style={{ display: "flex", gap: 13, marginBottom: 14 }}><div style={{ flexShrink: 0, width: 36, height: 36, borderRadius: 10, background: ACCENT, color: BG, display: "grid", placeItems: "center", fontWeight: 800, fontFamily: "'JetBrains Mono'" }}>{n}</div><div><div style={{ fontSize: 15, fontWeight: 700 }}>{t}</div><div style={{ fontSize: 13, color: "#8b8f96", lineHeight: 1.5, marginTop: 2 }}>{d}</div></div></div>)}
+      <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 19, margin: "24px 2px 12px" }}>Questions fréquentes</div>
+      {faqs.map(([q, a], i) => <div key={i} style={{ background: "#121316", border: "1px solid #1d1f23", borderRadius: 13, padding: 14, marginBottom: 9 }}><div style={{ fontSize: 14, fontWeight: 700 }}>🛡 {q}</div><div style={{ fontSize: 13, color: "#9aa0a6", lineHeight: 1.5, marginTop: 6 }}>{a}</div></div>)}
+      <div style={{ textAlign: "center", color: "#5c6068", fontSize: 12, margin: "18px 0 8px" }}>Chantia · Plus aucun appel manqué</div>
+    </div>
+  );
+}
+
+function Dash({ data }) {
+  const mrr = data.clients.reduce((s, c) => s + c.mrr, 0);
+  const won = data.leads.filter(l => l.stage === "Devis" || l.stage === "Qualifié").length;
+  const conv = data.leads.length ? Math.round(won / data.leads.length * 100) : 0;
+  const cards = [["📈", mrr + "€", "MRR", ACCENT], ["👥", data.clients.length, "Clients", "#7c9cff"], ["📵", data.leads.length, "Appels captés", "#4ade80"], ["📊", conv + "%", "Conversion", "#fbbf24"]];
+  return (
+    <div style={{ padding: "4px 14px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>{cards.map(([e, v, l, c], i) => <div key={i} style={{ background: "#121316", border: "1px solid #1d1f23", borderRadius: 16, padding: 14 }}><div style={{ fontSize: 15 }}>{e}</div><div style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700, fontSize: 26, marginTop: 6, letterSpacing: -1 }}>{v}</div><div style={{ fontSize: 11, color: "#8b8f96" }}>{l}</div></div>)}</div>
+      <div style={{ background: "#121316", border: "1px solid #1d1f23", borderRadius: 16, padding: "14px 14px 8px", marginBottom: 12 }}><div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ fontSize: 12, color: "#8b8f96", fontWeight: 600 }}>Revenus cumulés</span><span style={{ fontSize: 12, color: ACCENT, fontWeight: 700, fontFamily: "'JetBrains Mono'" }}>+198%</span></div><Sparkline data={data.revenue} /></div>
+      <div style={{ fontSize: 13, fontWeight: 700, margin: "4px 2px 10px" }}>📵 Appels captés récemment</div>
+      {data.leads.slice(0, 4).map(l => <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 11, padding: "10px 12px", background: "#121316", border: "1px solid #1d1f23", borderRadius: 12, marginBottom: 7 }}><div style={{ width: 34, height: 34, borderRadius: 9, background: "rgba(255,138,61,0.12)", display: "grid", placeItems: "center", flexShrink: 0 }}>💬</div><div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 13, fontWeight: 600 }}>{l.name} · <span style={{ color: "#8b8f96", fontWeight: 400 }}>{l.value}</span></div><div style={{ fontSize: 11, color: "#6b7078" }}>{l.source} → {l.client}</div></div><Badge stage={l.stage} /></div>)}
+    </div>
+  );
+}
+
+function PHead({ title, count, onAdd }) { return <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "4px 2px 12px" }}><div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 22 }}>{title} <span style={{ color: "#5c6068", fontSize: 15 }}>{count}</span></div>{onAdd && <button onClick={onAdd} style={{ background: ACCENT, color: BG, border: "none", padding: "8px 13px", borderRadius: 10, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>＋ Ajouter</button>}</div>; }
+
+function Clients({ data, onAdd, onDel }) {
+  return <div style={{ padding: "4px 14px" }}><PHead title="Clients" count={data.clients.length} onAdd={onAdd} />{data.clients.map(it => <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 11, padding: 13, background: "#121316", border: "1px solid #1d1f23", borderRadius: 13, marginBottom: 8 }}><div style={{ width: 38, height: 38, borderRadius: 10, background: "#1d1f23", display: "grid", placeItems: "center", flexShrink: 0, fontWeight: 700, color: ACCENT }}>{it.name[0]}</div><div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 14, fontWeight: 600 }}>{it.name}</div><div style={{ fontSize: 11, color: "#6b7078" }}>{it.city} · depuis {it.since}</div></div><div style={{ textAlign: "right" }}><div style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700, color: ACCENT, fontSize: 15 }}>{it.mrr}€</div><button onClick={() => onDel("clients", it.id)} style={{ background: "none", border: "none", color: "#4a4e56", marginTop: 2, cursor: "pointer", fontSize: 13 }}>🗑</button></div></div>)}</div>;
+}
+
+function Leads({ data }) {
+  const stages = ["Nouveau", "Qualifié", "Devis", "Perdu"];
+  return <div style={{ padding: "4px 14px" }}><div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 22, margin: "4px 2px 4px" }}>Demandes de devis</div><div style={{ fontSize: 11, color: "#6b7078", margin: "0 2px 14px" }}>Captées par l'IA. Vous ne traitez que les devis à faire.</div>{stages.map(s => { const items = data.leads.filter(l => l.stage === s); return <div key={s} style={{ marginBottom: 14 }}><div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}><Badge stage={s} /><span style={{ fontSize: 11, color: "#5c6068" }}>{items.length}</span></div>{items.map(l => <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: 12, background: "#121316", border: "1px solid #1d1f23", borderRadius: 12, marginBottom: 7 }}><div style={{ flex: 1 }}><div style={{ fontSize: 13, fontWeight: 600 }}>{l.name}</div><div style={{ fontSize: 11, color: "#6b7078" }}>{l.value} · {l.source}</div></div>{s === "Devis" ? <span style={{ background: "rgba(255,138,61,0.14)", color: ACCENT, padding: "7px 11px", borderRadius: 9, fontSize: 12, fontWeight: 700 }}>📄 Chiffrer</span> : <span style={{ color: "#4a4e56" }}>📞</span>}</div>)}</div>; })}</div>;
+}
+
+function Prospects({ data, onAdd, onAddDirect, onDel, onMsg }) {
+  const [city, setCity] = useState(""); const [trade, setTrade] = useState("Plombier"); const [results, setResults] = useState([]); const [loading, setLoading] = useState(false); const [err, setErr] = useState("");
+  const trades = ["Plombier", "Électricien", "Chauffagiste", "Maçon", "Peintre", "Couvreur", "Menuisier"];
+  const search = async () => {
+    const c = city.trim(); if (!c || loading) return;
+    if (!PROXY_URL) { setErr("La recherche en direct nécessite le proxy (voir guide). Tu peux ajouter tes prospects à la main avec ＋ Ajouter."); return; }
+    setLoading(true); setErr(""); setResults([]);
+    try {
+      const res = await fetch(PROXY_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ role: "user", content: `Trouve jusqu'à 6 artisans "${trade}" à ${c}, France, via annuaires publics. Pour chacun: name, agent, phone, address. Réponds UNIQUEMENT en JSON: [{"name":"","agent":"","phone":"","address":""}]` }], tools: [{ type: "web_search_20250305", name: "web_search" }] }) });
+      const d = await res.json(); const txt = d.text || ""; const s = txt.indexOf("["), e = txt.lastIndexOf("]");
+      const arr = (s !== -1 && e !== -1) ? JSON.parse(txt.slice(s, e + 1)) : []; setResults(Array.isArray(arr) ? arr : []);
+      if (!arr.length) setErr("Aucun résultat. Réessaie.");
+    } catch { setErr("Recherche indisponible."); }
+    setLoading(false);
+  };
+  return (
+    <div style={{ padding: "4px 14px" }}>
+      <PHead title="Prospection" count={data.prospects.length} onAdd={onAdd} />
+      <div style={{ background: "#121316", border: "1px solid #1d1f23", borderRadius: 14, padding: 14, marginBottom: 14 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 9 }}>🔍 Trouver des artisans par ville</div>
+        <select value={trade} onChange={e => setTrade(e.target.value)} style={{ width: "100%", background: BG, border: "1px solid #26282d", borderRadius: 10, padding: "11px 12px", color: "#e8eaed", fontSize: 14, marginBottom: 8 }}>{trades.map(t => <option key={t}>{t}</option>)}</select>
+        <div style={{ display: "flex", gap: 8 }}><input value={city} onChange={e => setCity(e.target.value)} onKeyDown={e => e.key === "Enter" && search()} placeholder="Ex : Toulouse" style={{ flex: 1, background: BG, border: "1px solid #26282d", borderRadius: 10, padding: "11px 12px", color: "#e8eaed", fontSize: 14 }} /><button onClick={search} disabled={loading} style={{ background: ACCENT, color: BG, border: "none", borderRadius: 10, padding: "0 16px", fontWeight: 700, fontSize: 13, cursor: "pointer", opacity: loading ? 0.5 : 1 }}>{loading ? "…" : "Chercher"}</button></div>
+        <div style={{ fontSize: 10.5, color: "#5c6068", marginTop: 8, lineHeight: 1.45 }}>Coordonnées pro publiques — à vérifier. Respecte Bloctel et le RGPD.</div>
+      </div>
+      {err && <div style={{ background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.25)", borderRadius: 12, padding: 12, fontSize: 12.5, color: "#f5d98a", marginBottom: 14 }}>{err}</div>}
+      {results.map((r, i) => <div key={i} style={{ background: "#121316", border: "1px solid #1d1f23", borderRadius: 13, padding: 13, marginBottom: 8 }}><div style={{ fontSize: 14, fontWeight: 600 }}>{r.name}</div>{r.agent ? <div style={{ fontSize: 12, color: "#9aa0a6" }}>{r.agent}</div> : null}<div style={{ fontSize: 12, color: "#7c8088", marginTop: 2 }}>{r.address}{r.phone ? " · " + r.phone : ""}</div><div style={{ display: "flex", gap: 8, marginTop: 10 }}>{r.phone ? <a href={"tel:" + r.phone} style={{ background: "rgba(74,222,128,0.13)", color: "#4ade80", padding: "8px 12px", borderRadius: 9, fontSize: 12.5, fontWeight: 700, textDecoration: "none" }}>📞 Appeler</a> : null}<button onClick={() => onAddDirect({ name: r.agent || r.name, city: r.address || city, channel: trade, stage: "À contacter", phone: r.phone || "" })} style={{ background: "#1d1f23", color: "#e8eaed", border: "1px solid #26282d", padding: "8px 12px", borderRadius: 9, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>＋ Ajouter</button></div></div>)}
+      <div style={{ fontSize: 11.5, color: "#6b7078", margin: "0 2px 12px" }}>Mes prospects · tape "Message" → copie → envoie.</div>
+      {data.prospects.map(it => <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 11, padding: 13, background: "#121316", border: "1px solid #1d1f23", borderRadius: 13, marginBottom: 8 }}><div style={{ width: 38, height: 38, borderRadius: 10, background: "#1d1f23", display: "grid", placeItems: "center", flexShrink: 0, fontWeight: 700, color: "#7c9cff" }}>{it.name[0]}</div><div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 14, fontWeight: 600 }}>{it.name}</div><div style={{ fontSize: 11, color: "#6b7078" }}>{it.city} · {it.channel}{it.phone ? " · " + it.phone : ""}</div><div style={{ marginTop: 5 }}><Badge stage={it.stage} /></div></div><div style={{ display: "flex", flexDirection: "column", gap: 6 }}><button onClick={() => onMsg(it)} style={{ background: ACCENT, color: BG, border: "none", padding: "7px 10px", borderRadius: 9, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>➤ Message</button><button onClick={() => onDel("prospects", it.id)} style={{ background: "none", border: "none", color: "#4a4e56", cursor: "pointer", fontSize: 13 }}>🗑</button></div></div>)}
+    </div>
+  );
+}
+
+function ROI() {
+  const [value, setValue] = useState(1200); const [calls, setCalls] = useState(50); const [missedPct, setMissedPct] = useState(30); const [conv, setConv] = useState(25);
+  const r = useMemo(() => { const missed = calls * missedPct / 100; const rec = missed * 0.7; const ch = rec * conv / 100; const rm = ch * value; return { rec, rm, ry: rm * 12, mult: rm / 190 }; }, [value, calls, missedPct, conv]);
+  const Sl = ({ label, val, set, min, max, step, fmt }) => <div style={{ marginBottom: 18 }}><div style={{ display: "flex", justifyContent: "space-between", marginBottom: 9 }}><span style={{ fontSize: 13, color: "#b5b9bf" }}>{label}</span><span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700, color: ACCENT, fontSize: 14 }}>{fmt(val)}</span></div><input type="range" min={min} max={max} step={step} value={val} onChange={e => set(Number(e.target.value))} style={{ width: "100%" }} /></div>;
+  return <div style={{ padding: "4px 14px" }}>
+    <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 22, margin: "4px 2px 2px" }}>Calculateur de ROI</div>
+    <div style={{ fontSize: 11.5, color: "#6b7078", margin: "0 2px 16px" }}>Montre ça en direct à l'artisan. Les chiffres ferment la vente.</div>
+    <div style={{ background: "#121316", border: "1px solid #1d1f23", borderRadius: 16, padding: "18px 16px" }}>
+      <Sl label="Valeur moyenne d'un chantier" val={value} set={setValue} min={300} max={8000} step={100} fmt={v => v.toLocaleString() + "€"} />
+      <Sl label="Appels reçus / mois" val={calls} set={setCalls} min={10} max={200} step={5} fmt={v => v} />
+      <Sl label="% appels manqués" val={missedPct} set={setMissedPct} min={10} max={70} step={5} fmt={v => v + "%"} />
+      <Sl label="Taux devis → chantier" val={conv} set={setConv} min={5} max={60} step={5} fmt={v => v + "%"} />
+    </div>
+    <div style={{ background: "linear-gradient(135deg,rgba(255,138,61,0.14),rgba(255,138,61,0.04))", border: "1.5px solid " + ACCENT, borderRadius: 18, padding: 20, marginTop: 14, textAlign: "center" }}><div style={{ fontSize: 12, color: "#d6a877", fontWeight: 600 }}>Revenu additionnel estimé</div><div style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700, fontSize: 40, letterSpacing: -2, margin: "4px 0", color: "#fff" }}>{Math.round(r.ry).toLocaleString()}€</div><div style={{ fontSize: 12, color: "#8b8f96" }}>par an · {Math.round(r.rm).toLocaleString()}€ / mois</div></div>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }}><div style={{ background: "#121316", border: "1px solid #1d1f23", borderRadius: 14, padding: 14, textAlign: "center" }}><div style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700, fontSize: 22, color: ACCENT }}>{r.mult.toFixed(1)}x</div><div style={{ fontSize: 11, color: "#8b8f96", marginTop: 2 }}>ROI mensuel</div></div><div style={{ background: "#121316", border: "1px solid #1d1f23", borderRadius: 14, padding: 14, textAlign: "center" }}><div style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700, fontSize: 22, color: "#4ade80" }}>{r.rec.toFixed(0)}</div><div style={{ fontSize: 11, color: "#8b8f96", marginTop: 2 }}>appels sauvés / mois</div></div></div>
+    <div style={{ background: "#121316", border: "1px solid #1d1f23", borderRadius: 14, padding: 14, marginTop: 12, fontSize: 13, color: "#c5c8cc", lineHeight: 1.55 }}><b style={{ color: "#fff" }}>L'argument :</b> « Chantia coûte 190€/mois. Sur vos chiffres, ça rapporte <b style={{ color: ACCENT }}>{Math.round(r.rm).toLocaleString()}€/mois</b>. Vous récupérez les devis que vous ratiez en bossant. »</div>
+  </div>;
+}
+
+function AddModal({ type, onClose, onAdd }) {
+  const isC = type === "clients"; const trades = ["Plombier", "Électricien", "Chauffagiste", "Maçon", "Peintre", "Couvreur", "Menuisier", "Autre"];
+  const [f, setF] = useState(isC ? { name: "", city: "", mrr: 190, since: "Juin" } : { name: "", city: "", channel: "Plombier", stage: "À contacter" });
+  const set = (k, v) => setF({ ...f, [k]: v });
+  const inp = { width: "100%", background: BG, border: "1px solid #26282d", borderRadius: 10, padding: "12px 13px", color: "#e8eaed", fontSize: 14, marginBottom: 10 };
+  return <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "flex-end", zIndex: 50, maxWidth: 480, margin: "0 auto" }}><div onClick={e => e.stopPropagation()} style={{ width: "100%", background: "#15171a", borderRadius: "22px 22px 0 0", padding: 20, border: "1px solid #26282d" }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}><div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 18 }}>{isC ? "Nouveau client" : "Nouveau prospect"}</div><button onClick={onClose} style={{ background: "#1d1f23", border: "none", borderRadius: 8, padding: "6px 9px", color: "#8b8f96", cursor: "pointer" }}>✕</button></div><input style={inp} placeholder="Nom de l'entreprise" value={f.name} onChange={e => set("name", e.target.value)} /><input style={inp} placeholder="Ville / secteur" value={f.city} onChange={e => set("city", e.target.value)} />{isC ? <input style={inp} type="number" placeholder="MRR €" value={f.mrr} onChange={e => set("mrr", Number(e.target.value))} /> : <div style={{ display: "flex", gap: 10 }}><select style={{ ...inp, flex: 1 }} value={f.channel} onChange={e => set("channel", e.target.value)}>{trades.map(c => <option key={c}>{c}</option>)}</select><select style={{ ...inp, flex: 1 }} value={f.stage} onChange={e => set("stage", e.target.value)}>{["À contacter", "Contacté", "Démo", "Signé"].map(s => <option key={s}>{s}</option>)}</select></div>}<button onClick={() => f.name && onAdd(type, f)} style={{ width: "100%", background: ACCENT, color: BG, border: "none", padding: 14, borderRadius: 12, fontWeight: 800, fontSize: 15, marginTop: 4, cursor: "pointer" }}>Enregistrer</button></div></div>;
+}
+
+function MsgModal({ p, onClose, onSent }) {
+  const text = msgTemplate(p); const [copied, setCopied] = useState(false);
+  const copy = async () => { try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1800); } catch {} };
+  return <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "flex-end", zIndex: 50, maxWidth: 480, margin: "0 auto" }}><div onClick={e => e.stopPropagation()} style={{ width: "100%", background: "#15171a", borderRadius: "22px 22px 0 0", padding: 20, border: "1px solid #26282d" }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}><div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 18 }}>Message → {p.name}</div><button onClick={onClose} style={{ background: "#1d1f23", border: "none", borderRadius: 8, padding: "6px 9px", color: "#8b8f96", cursor: "pointer" }}>✕</button></div><div style={{ fontSize: 11.5, color: "#7c8088", marginBottom: 12 }}>{p.channel} · {p.city}</div><textarea readOnly value={text} style={{ width: "100%", height: 165, background: BG, border: "1px solid #26282d", borderRadius: 12, padding: 13, color: "#e8eaed", fontSize: 13.5, lineHeight: 1.5, fontFamily: "inherit", resize: "none" }} /><div style={{ display: "flex", gap: 10, marginTop: 12 }}><button onClick={copy} style={{ flex: 1, background: "#1d1f23", color: "#e8eaed", border: "1px solid #26282d", padding: 13, borderRadius: 12, fontWeight: 700, fontSize: 14, cursor: "pointer" }}>{copied ? "✓ Copié" : "⧉ Copier"}</button><button onClick={() => onSent(p.id)} style={{ flex: 1, background: ACCENT, color: BG, border: "none", padding: 13, borderRadius: 12, fontWeight: 800, fontSize: 14, cursor: "pointer" }}>➤ Envoyé</button></div></div></div>;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
